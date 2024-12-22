@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+       <link rel="stylesheet" href="{{ url_for('static', filename='styles/css_style.css') }}">
+       <script src="{{ url_for('static', filename='scripts/script.js') }}"></script>
+    </head>
+    <title>GPU Temperature Monitor</title>
+</head>
+<body>
+    <h1>GPU Monitoring</h1>
+    <div class="container">
+        <table>
+            <tr>
+                <th></th>
+                <th>Temperature</th>
+                <th>Fan Speed</th>
+            </tr>
+            <tr>
+                <th>GPU 1</th>
+                <th><canvas id="gpu_1_temperature_gauge"></canvas></th>
+                <th><canvas id="gpu_1_fan_gauge"></canvas></th>
+            </tr>
+            <tr>
+                <th>GPU 1</th>
+                <th><canvas id="gpu_2_temperature_gauge"></canvas></th>
+                <th><canvas id="gpu_2_fan_gauge"></canvas></th>
+            </tr>
+        </table>
+        <div class="plot-container">
+            <img src="/plot" alt="GPU Temperature Plot">
+        </div>
+        <h2>`nvidia-smi` Output</h2>
+        <pre>{{nvidia_output}}</pre>  <!-- Display nvidia-smi output -->
+    </div>
+    <script>
+    drawGauge('gpu_1_temperature_gauge', {{gpu_temperature[0]}}, '° C');
+    drawGauge('gpu_2_temperature_gauge', {{gpu_temperature[1]}}, '° C');
+    drawGauge('gpu_1_fan_gauge', {{adjusted_fan_speed[0]}}, '%');
+    drawGauge('gpu_2_fan_gauge', {{adjusted_fan_speed[1]}}, '%');
+    </script>
+    <footer>
+        <p>Monitoring GPU temperatures.</p>
+    </footer>
+</body>
+</html>
