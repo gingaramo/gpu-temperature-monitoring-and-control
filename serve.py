@@ -91,7 +91,7 @@ def generate_temperature_plot():
         ax_fan.legend(loc='upper right')
         ax_temp.grid(True)
         ax_temp.set_ylim(0, 100)  # Set y-axis limits to between 0 and 100
-        ax_fan.set_ylim(FAN_SPEED_MIN, 100)  # Set y-axis limits for fan speed
+        ax_fan.set_ylim(0, 100)  # Set y-axis limits for fan speed
 
     plot_gpu(ax1, ax1.twinx(), gpu_1_temps, fan_1_speeds, "GPU 1")
     plot_gpu(ax2, ax2.twinx(), gpu_2_temps, fan_2_speeds, "GPU 2")
