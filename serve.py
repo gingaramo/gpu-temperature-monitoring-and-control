@@ -3,103 +3,98 @@ import time
 import csv
 import numpy as np
 import matplotlib.pyplot as plt
-from flask import Flask, send_file, render_template, jsonify
+from flask import Flask, send_file, render_template, jsonify, request, redirect
 import subprocess
+import threading
 from simple_pid import PID
 
 app = Flask(__name__)
 
-# Fan control options
+# Fan control constants
 TEMPERATURE_TARGET = 50  # Target temperature in Celsius
-FAN_SPEED_MIN = 40  # Minimum fan speed in %
-fan_pid = [PID(2, 0.01, 0.15, setpoint=TEMPERATURE_TARGET) for _ in range(2)]
-fan_speed = [0] * 2
-adjusted_fan_speed = [0] * 2
+FAN_SPEED_MIN = 40       # Minimum fan speed in percent
 
-# Plotting options
-PLOT_LATEST_N = 30
-DATA_FILE = "gpu_temperatures.csv"
+# Initialize PID controllers for two fans
+fan_pid_controllers = [PID(1, 0.00, 0.05, setpoint=TEMPERATURE_TARGET) for _ in range(2)]
+current_fan_speeds = [FAN_SPEED_MIN] * 2
+adjusted_fan_speeds = [FAN_SPEED_MIN] * 2
 
-def get_nvidia_smi_output():
+# Plotting constants
+NUM_POINTS_TO_PLOT = 30
+DATA_LOG_FILE = "gpu_temperatures.csv"
+
+def fetch_nvidia_smi_output():
     """Fetches the output of the nvidia-smi command."""
     try:
-        output = subprocess.check_output(["nvidia-smi"], encoding='utf-8')
-        return output
+        return subprocess.check_output(["nvidia-smi"], encoding='utf-8')
     except subprocess.CalledProcessError as e:
         return f"Error fetching nvidia-smi output: {e}"
 
-def get_gpus_temp():
-    """Fetches the maximum GPU temperature using nvidia-smi."""
-    gpu_temps = subprocess.check_output(
+def fetch_ollama_ps_output():
+    """Fetches the output of ollama ps command."""
+    try:
+        return subprocess.check_output(["ollama", "ps"], encoding='utf-8')
+    except subprocess.CalledProcessError as e:
+        return f"Error fetching ollama output: {e}"
+
+def get_gpu_temperatures():
+    """Fetches the maximum GPU temperatures using nvidia-smi."""
+    try:
+        temps = subprocess.check_output(
         ["nvidia-smi", "--query-gpu=temperature.gpu", "--format=csv,noheader,nounits"]
     ).decode("utf-8").strip().split("\n")
-    return list(map(int, gpu_temps))
+        return [int(temp) for temp in temps]
+    except Exception as e:
+        print(f"Error fetching GPU temperatures: {e}")
+        return [0] * 2
 
-def plot_data():
+def generate_temperature_plot():
     """Generates a plot of the logged GPU temperatures."""
-    if not os.path.exists(DATA_FILE):
+    if not os.path.exists(DATA_LOG_FILE):
         return None
 
-    # Read GPU temperatures
     timestamps = []
-    gpu_1_temperature = []
-    gpu_2_temperature = []
-    fan_1_speed = []
-    fan_2_speed = []
-    with open(DATA_FILE, mode='r') as file:
+    gpu_1_temps = []
+    gpu_2_temps = []
+    fan_1_speeds = []
+    fan_2_speeds = []
+    with open(DATA_LOG_FILE, mode='r') as file:
         reader = csv.reader(file)
         for row in reader:
             timestamps.append(row[0])
-            gpu_1_temperature.append(int(row[1]))
-            gpu_2_temperature.append(int(row[2]))
-            fan_1_speed.append(float(row[3]))
-            fan_2_speed.append(float(row[4]))
+            gpu_1_temps.append(int(row[1]))
+            gpu_2_temps.append(int(row[2]))
+            fan_1_speeds.append(float(row[3]))
+            fan_2_speeds.append(float(row[4]))
 
-    timestamps = timestamps[-PLOT_LATEST_N:]
-    gpu_1_temperature = gpu_1_temperature[-PLOT_LATEST_N:]
-    gpu_2_temperature = gpu_2_temperature[-PLOT_LATEST_N:]
-    fan_1_speed = fan_1_speed[-PLOT_LATEST_N:]
-    fan_2_speed = fan_2_speed[-PLOT_LATEST_N:]
+    # Limit the data to the latest N points
+    timestamps = timestamps[-NUM_POINTS_TO_PLOT:]
+    gpu_1_temps = gpu_1_temps[-NUM_POINTS_TO_PLOT:]
+    gpu_2_temps = gpu_2_temps[-NUM_POINTS_TO_PLOT:]
+    fan_1_speeds = fan_1_speeds[-NUM_POINTS_TO_PLOT:]
+    fan_2_speeds = fan_2_speeds[-NUM_POINTS_TO_PLOT:]
 
     # Create a figure with two subplots side by side
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 5), sharey=False)
 
-    # Plot for GPU 1
-    ax1_temperature = ax1
-    ax1_fan = ax1.twinx()
-    ax1_temperature.plot(timestamps, gpu_1_temperature, marker='o', color='green', label='GPU 1 Temperature (°C)')
-    ax1_fan.plot(timestamps, fan_1_speed, marker='x', color='red', label='Fan 1 Speed')
-    ax1_temperature.axhline(y=TEMPERATURE_TARGET, color='g', linestyle='--', label=f"Target Temperature ({TEMPERATURE_TARGET}°C)")
-    ax1_temperature.set_title("GPU 1")
-    ax1_temperature.set_xlabel('Timestamp')
-    ax1_temperature.set_ylabel('Temperature (°C)', color='green')
-    ax1_fan.set_ylabel('Fan Speed', color='red')
-    ax1_temperature.tick_params(axis='y', labelcolor='green')
-    ax1_fan.tick_params(axis='y', labelcolor='orange')
-    ax1_temperature.legend(loc='upper left')
-    ax1_fan.legend(loc='upper right')
-    ax1_temperature.grid(True)
-    ax1_temperature.set_ylim(0, 100)  # Set y-axis limits to between 0 and 100
-    ax1_fan.set_ylim(0, 100)  # Set y-axis limits to between 0 and 100
+    def plot_gpu(ax_temp, ax_fan, gpu_temps, fan_speeds, title):
+        ax_temp.plot(timestamps, gpu_temps, marker='o', color='green', label=f'{title} Temperature (°C)')
+        ax_fan.plot(timestamps, fan_speeds, marker='x', color='red', label=f'Fan Speed')
+        ax_temp.axhline(y=TEMPERATURE_TARGET, color='g', linestyle='--', label=f'Target Temperature ({TEMPERATURE_TARGET}°C)')
+        ax_temp.set_title(title)
+        ax_temp.set_xlabel('Timestamp')
+        ax_temp.set_ylabel('Temperature (°C)', color='green')
+        ax_fan.set_ylabel('Fan Speed (%)', color='red')
+        ax_temp.tick_params(axis='y', labelcolor='green')
+        ax_fan.tick_params(axis='y', labelcolor='orange')
+        ax_temp.legend(loc='upper left')
+        ax_fan.legend(loc='upper right')
+        ax_temp.grid(True)
+        ax_temp.set_ylim(0, 100)  # Set y-axis limits to between 0 and 100
+        ax_fan.set_ylim(FAN_SPEED_MIN, 100)  # Set y-axis limits for fan speed
 
-    # Plot for GPU 2
-    ax2_temperature = ax2
-    ax2_fan = ax2.twinx()
-    ax2_temperature.plot(timestamps, gpu_2_temperature, marker='o', color='green', label='GPU 2 Temperature (°C)')
-    ax2_fan.plot(timestamps, fan_2_speed, marker='x', color='red', label='Fan 2 Speed')
-    ax2_temperature.axhline(y=TEMPERATURE_TARGET, color='g', linestyle='--', label=f"Target Temperature ({TEMPERATURE_TARGET}°C)")
-    ax2_temperature.set_title("GPU 2")
-    ax2_temperature.set_xlabel('Timestamp')
-    ax2_temperature.set_ylabel('Temperature (°C)', color='green')
-    ax2_fan.set_ylabel('Fan Speed', color='red')
-    ax2_temperature.tick_params(axis='y', labelcolor='green')
-    ax2_fan.tick_params(axis='y', labelcolor='red')
-    ax2_temperature.legend(loc='upper left')
-    ax2_fan.legend(loc='upper right')
-    ax2_temperature.grid(True)
-    ax2_temperature.set_ylim(0, 100)  # Set y-axis limits to between 0 and 100
-    ax2_fan.set_ylim(0, 100)  # Set y-axis limits to between 0 and 100
-
+    plot_gpu(ax1, ax1.twinx(), gpu_1_temps, fan_1_speeds, "GPU 1")
+    plot_gpu(ax2, ax2.twinx(), gpu_2_temps, fan_2_speeds, "GPU 2")
     # Save the plot as a JPEG file
     plot_file = "gpu_temperatures_side_by_side.jpg"
     plt.savefig(plot_file)
@@ -109,48 +104,73 @@ def plot_data():
 @app.route('/')
 def index():
     """Displays the plot and nvidia-smi output on the web page with modern styling."""
-    nvidia_output = get_nvidia_smi_output()
-    return render_template("index.html", nvidia_output=nvidia_output, gpu_temperature=get_gpus_temp(), fan_speed=fan_speed, adjusted_fan_speed=adjusted_fan_speed)
+    nvidia_output = fetch_nvidia_smi_output()
+    ollama_output = fetch_ollama_ps_output()
+    gpu_temps = get_gpu_temperatures()
+    return render_template("index.html",
+                           nvidia_output=nvidia_output,
+                           ollama_output=ollama_output,
+                           gpu_temps=gpu_temps,
+                           fan_speeds=current_fan_speeds,
+                           adjusted_fan_speeds=adjusted_fan_speeds)
+@app.route('/stop_ollama_model')
+def stop_ollama_model():
+    """Stops a specified Ollama model."""
+    model_name = request.args.get('model_name')
+    if model_name:
+        subprocess.run(["ollama", "stop", model_name])
+    return redirect('/')
 
 @app.route('/fan_control')
 def fan_control():
-    """Control the fan speed."""
-    # Get temperature for cards.
-    output = subprocess.check_output(['nvidia-smi', '-q'])
-    lines = output.decode().split('\n')
-    gpus_temp = [float(line.split(':')[1][:-2]) for line in lines if 'GPU Current Temp' in line]
+    """Controls the fan speed using a PID controller."""
+    #try:
+    nvidia_output = subprocess.check_output(['nvidia-smi', '-q'])
+    lines = nvidia_output.decode().split('\n')
+    gpu_temps = [float(line.split(':')[1].strip()[:-2]) for line in lines if 'GPU Current Temp' in line]
 
-    # Update fan speed
-    fan_speed_delta = [pid_and_temp[0](pid_and_temp[1]) for pid_and_temp in zip(fan_pid, gpus_temp)]
+    fan_speed_deltas = [pid(temp) for pid, temp in zip(fan_pid_controllers, gpu_temps)]
+    for i, (temp, delta) in enumerate(zip(gpu_temps, fan_speed_deltas)):
+        # Only update the fan speed if the temperature is above target or already adjusted
+        if temp >= TEMPERATURE_TARGET or current_fan_speeds[i] > 0:
+            current_fan_speeds[i] -= 0.1 * delta
+            current_fan_speeds[i] = max(FAN_SPEED_MIN, min(current_fan_speeds[i], 100))
+            adjusted_fan_speeds[i] = 0 if current_fan_speeds[i] < FAN_SPEED_MIN + 1e-3 else current_fan_speeds[i]
 
-    for i in range(2):
-        # We do minus because increasing the control decreases speed.
-        fan_speed[i] = min(max(FAN_SPEED_MIN, fan_speed[i] - 0.1 * fan_speed_delta[i]), 100.0)
-        adjusted_fan_speed[i] = 0 if fan_speed[i] < FAN_SPEED_MIN + 0.5 else fan_speed[i]
-    return jsonify({'gpu_temps': gpus_temp, 'fan_speed': adjusted_fan_speed, 'fan_speed_before_adjustment': fan_speed, 'fan_speed_delta': fan_speed_delta})
+    return jsonify({
+            'gpu_temps': gpu_temps,
+            'fan_speed': adjusted_fan_speeds,
+            'fan_speed_deltas': fan_speed_deltas,
+    })
+    #except Exception as e:
+    #    print(f"Error in fan control: {e}")
+    #    return jsonify({'error': str(e)}), 500
 
 @app.route('/plot')
 def plot():
     """Serves the temperature plot as an image."""
-    plot_file = plot_data()
+    plot_file = generate_temperature_plot()
     if plot_file:
         return send_file(plot_file, mimetype='image/jpeg')
     return "No temperature data available."
 
+def log_data_periodically():
+    """Logs GPU temperatures and fan speeds periodically."""
+    while True:
+        try:
+            temps = get_gpu_temperatures()
+            with open(DATA_LOG_FILE, mode='a', newline='') as file:
+                writer = csv.writer(file)
+                writer.writerow([time.strftime("%Y-%m-%d %H:%M:%S"), temps[0], temps[1],
+                                adjusted_fan_speeds[0], adjusted_fan_speeds[1]])
+            print(f"Logged temperature: {temps}°C")
+            print(f"Logged fan speed: {adjusted_fan_speeds}%")
+        except Exception as e:
+            print(f"Error logging data: {e}")
+        time.sleep(60)  # Log every minute
+
 if __name__ == "__main__":
     # Start a separate thread to log the temperature and USB state every minute
-    import threading
-    
-    def log_data_periodically():
-        while True:
-            temps = get_gpus_temp()
-            with open(DATA_FILE, mode='a', newline='') as file:
-                writer = csv.writer(file)
-                writer.writerow([time.strftime("%Y-%m-%d %H:%M:%S"), temps[0], temps[1], adjusted_fan_speed[0], adjusted_fan_speed[1]])
-            print(f"Logged temperature: {temps}°C")
-            print(f"Logged adjusted_fan_speed: {adjusted_fan_speed}°C")
-            time.sleep(10)  # Log every minute
-
     threading.Thread(target=log_data_periodically, daemon=True).start()
     
     # Run the Flask app

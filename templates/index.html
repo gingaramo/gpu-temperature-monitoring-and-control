@@ -32,13 +32,19 @@
             <img src="/plot" alt="GPU Temperature Plot">
         </div>
         <h2>`nvidia-smi` Output</h2>
-        <pre>{{nvidia_output}}</pre>  <!-- Display nvidia-smi output -->
+        <pre>{{nvidia_output}}</pre>
+        <h2>Ollama Output</h2>
+        <pre>{{ollama_output}}</pre>
+        <form action="/stop_ollama_model" method="get">
+            <input type="text" id="model_name" name="model_name" value="model name..">
+            <button>Stop Ollama</button>
+        </form>
     </div>
     <script>
-    drawGauge('gpu_1_temperature_gauge', {{gpu_temperature[0]}}, '° C');
-    drawGauge('gpu_2_temperature_gauge', {{gpu_temperature[1]}}, '° C');
-    drawGauge('gpu_1_fan_gauge', {{adjusted_fan_speed[0]}}, '%');
-    drawGauge('gpu_2_fan_gauge', {{adjusted_fan_speed[1]}}, '%');
+    drawGauge('gpu_1_temperature_gauge', {{gpu_temps[0]}}, '° C');
+    drawGauge('gpu_2_temperature_gauge', {{gpu_temps[1]}}, '° C');
+    drawGauge('gpu_1_fan_gauge', {{adjusted_fan_speeds[0]}}, '%');
+    drawGauge('gpu_2_fan_gauge', {{adjusted_fan_speeds[1]}}, '%');
     </script>
     <footer>
         <p>Monitoring GPU temperatures.</p>
